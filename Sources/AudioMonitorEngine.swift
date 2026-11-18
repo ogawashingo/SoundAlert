@@ -108,14 +108,25 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     private func loadSettings() {
         if let data = try? Data(contentsOf: settingsFileURL),
            var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            var needSave = false
             // Migrate old default (-48 dB) to a calmer noise gate (-38 dB) for high-gain USB webcams
             if decoded.minimumRMSdB == -48.0 {
                 decoded.minimumRMSdB = -38.0
+                needSave = true
             }
             if decoded.hostName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 decoded.hostName = Host.current().localizedName ?? "Mac"
+                needSave = true
+            }
+            // Migrate legacy Teams text to generalized text
+            if decoded.customMessageText.contains("Teams") {
+                decoded.customMessageText = "登録されたサウンドを検知しました！"
+                needSave = true
             }
             self.settings = decoded
+            if needSave {
+                saveSettings()
+            }
         }
     }
 
