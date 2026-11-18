@@ -193,7 +193,7 @@ struct HeaderMonitorBar: View {
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
                             .foregroundColor(engine.currentRMSdB >= engine.settings.minimumRMSdB ? .primary : .secondary)
 
-                        Text("(ゲート: \(Int(engine.settings.minimumRMSdB)) dB)")
+                        Text("(検知する最小音量: \(Int(engine.settings.minimumRMSdB)) dB)")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundColor(.red.opacity(0.85))
 
@@ -209,7 +209,7 @@ struct HeaderMonitorBar: View {
                         .tint(.orange)
                         .controlSize(.small)
                         .fixedSize()
-                        .help("現在の部屋の環境音＋6dBに赤線（最小音量ゲート）を自動設定し、普段の環境音を遮断します")
+                        .help("現在の部屋の静けさに合わせて、生活音やエアコン等の環境ノイズを無視する音量しきい値を自動設定します")
                     }
 
                     GeometryReader { geo in
@@ -1026,9 +1026,9 @@ struct DiscordSettingsTabView: View {
 
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(String(format: "最小音量ゲート（これより小さい環境音は無視）: %.0f dB", engine.settings.minimumRMSdB))
+                                Text(String(format: "検知する最小音量（これ以下の生活音・雑音は無視）: %.0f dB", engine.settings.minimumRMSdB))
                                     .font(.system(size: 13, weight: .medium))
-                                Text("現在のマイク入力レベル: \(Int(engine.currentRMSdB)) dB（上部メーターの赤線がしきい値です）")
+                                Text("現在のマイク音量: \(Int(engine.currentRMSdB)) dB（上部メーターの目印ラインを上回ると音を判定します）")
                                     .font(.system(size: 11))
                                     .foregroundColor(.secondary)
                             }
