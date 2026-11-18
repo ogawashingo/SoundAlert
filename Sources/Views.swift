@@ -243,20 +243,28 @@ struct HeaderMonitorBar: View {
                 // 40-band Tonal Peak Visualizer
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text("周波数スペクトル (300Hz - 5.2kHz)")
+                        Text("周波数スペクトル")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
+
                         Spacer()
+
                         if engine.currentRMSdB >= engine.settings.minimumRMSdB {
-                            Text("● 解析中")
+                            Text("● 音声を解析中")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.indigo)
+                                .lineLimit(1)
                         } else {
-                            Text("環境ノイズ遮断中（静寂）")
+                            Text("ノイズ遮断中")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
+                                .lineLimit(1)
                         }
                     }
+                    .frame(height: 14)
+                    .help("300Hz〜5.2kHz の特徴的なアラート音周波数を表示します")
+
                     HStack(alignment: .bottom, spacing: 2) {
                         ForEach(0..<engine.liveSpectrum.count, id: \.self) { idx in
                             let val = CGFloat(engine.liveSpectrum[idx])
@@ -267,7 +275,7 @@ struct HeaderMonitorBar: View {
                     }
                     .frame(height: 22)
                 }
-                .frame(width: 250)
+                .frame(width: 260)
             }
         }
         .padding(.horizontal, 18)

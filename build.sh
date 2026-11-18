@@ -12,9 +12,13 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp Info.plist "$CONTENTS_DIR/Info.plist"
 [ -f AppIcon.icns ] && cp AppIcon.icns "$RESOURCES_DIR/AppIcon.icns"
 
+SDK_PATH="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+[ -d "$SDK_PATH" ] || SDK_PATH="$(xcrun --show-sdk-path)"
+
 echo "Compiling SoundAlert for Apple Silicon (arm64)..."
 /usr/bin/swiftc \
     -O \
+    -sdk "$SDK_PATH" \
     -module-cache-path /tmp/swift-module-cache \
     -swift-version 5 \
     -target arm64-apple-macosx14.0 \
