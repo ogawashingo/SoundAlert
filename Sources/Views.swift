@@ -871,6 +871,19 @@ struct DiscordSettingsTabView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
+                            Text("通知元ホスト名 / デバイス表示名:")
+                                .font(.system(size: 12, weight: .semibold))
+                            TextField("例: Mac mini, 自宅PC, オフィスMac", text: $engine.settings.hostName)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: engine.settings.hostName) {
+                                    engine.saveSettings()
+                                }
+                            Text("DiscordのBot名やメッセージの送信元デバイス名として表示されます")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
                             Text("通知メッセージ本文:")
                                 .font(.system(size: 12, weight: .semibold))
                             TextField("Microsoft Teamsのアラート音を検知しました！", text: $engine.settings.customMessageText)
@@ -979,6 +992,7 @@ struct DiscordSettingsTabView: View {
                 webhookURLString: settings.discordWebhookURL,
                 mention: settings.discordMention,
                 customMessage: settings.customMessageText,
+                hostName: settings.hostName,
                 profileName: "テスト通知 (Teams チャット通知音)",
                 similarity: 0.95,
                 deviceName: devName,

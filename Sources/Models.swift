@@ -45,6 +45,7 @@ struct AppSettings: Codable {
     var discordWebhookURL: String = ""
     var discordMention: String = "@here"
     var customMessageText: String = "Microsoft Teamsのアラート音を検知しました！"
+    var hostName: String = Host.current().localizedName ?? "Mac"
     var cooldownSeconds: Double = 10.0
     var selectedDeviceUID: String = ""
     var minimumRMSdB: Float = -38.0

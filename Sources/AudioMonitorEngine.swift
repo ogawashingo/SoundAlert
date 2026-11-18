@@ -112,6 +112,9 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             if decoded.minimumRMSdB == -48.0 {
                 decoded.minimumRMSdB = -38.0
             }
+            if decoded.hostName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                decoded.hostName = Host.current().localizedName ?? "Mac"
+            }
             self.settings = decoded
         }
     }
@@ -704,6 +707,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         let webhookURL = settings.discordWebhookURL
         let mention = settings.discordMention
         let customMsg = settings.customMessageText
+        let hostName = settings.hostName
         let devName = currentDeviceName
         let includeSim = settings.includeSimilarityInDiscord
 
@@ -713,6 +717,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
                     webhookURLString: webhookURL,
                     mention: mention,
                     customMessage: customMsg,
+                    hostName: hostName,
                     profileName: profile.name,
                     similarity: similarity,
                     deviceName: devName,

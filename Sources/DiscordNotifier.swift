@@ -10,6 +10,7 @@ enum DiscordNotifier {
         webhookURLString: String,
         mention: String,
         customMessage: String,
+        hostName: String,
         profileName: String,
         similarity: Float,
         deviceName: String,
@@ -24,6 +25,10 @@ enum DiscordNotifier {
               url.scheme == "https" || url.scheme == "http" else {
             return SendResult(success: false, message: "Webhook URLの形式が正しくありません")
         }
+
+        let effectiveHost = hostName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (Host.current().localizedName ?? "Mac")
+            : hostName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let formatter = ISO8601DateFormatter()
         let isoNow = formatter.string(from: Date())
@@ -48,6 +53,11 @@ enum DiscordNotifier {
                 "inline": true
             ],
             [
+                "name": "検知元デバイス",
+                "value": "`\(effectiveHost)`",
+                "inline": true
+            ],
+            [
                 "name": "入力マイク",
                 "value": "`\(deviceName)`",
                 "inline": true
@@ -65,8 +75,8 @@ enum DiscordNotifier {
         let embed: [String: Any] = [
             "title": isTest ? "Discord通知テスト成功" : "Microsoft Teams サウンド検知アラート",
             "description": isTest
-                ? "M4 Mac mini (`\(deviceName)`) からのDiscord通知連携が正常に動作しています。"
-                : "USBマイクが登録済みのアラート音を検知しました。",
+                ? "\(effectiveHost) (\(deviceName)) からのDiscord通知連携が正常に動作しています。"
+                : "\(effectiveHost) のマイクが登録済みのアラート音を検知しました。",
             "color": isTest ? 0x5865F2 : 0xED4245,
             "fields": fields,
             "timestamp": isoNow,
@@ -76,7 +86,7 @@ enum DiscordNotifier {
         ]
 
         let payload: [String: Any] = [
-            "username": "SoundAlert (Mac mini)",
+            "username": "SoundAlert (\(effectiveHost))",
             "content": contentText,
             "embeds": [embed]
         ]
