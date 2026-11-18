@@ -246,20 +246,13 @@ struct HeaderMonitorBar: View {
                         Text("周波数スペクトル")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.secondary)
-                            .lineLimit(1)
 
                         Spacer()
 
                         if engine.currentRMSdB >= engine.settings.minimumRMSdB {
-                            Text("● 音声を解析中")
+                            Text("● 解析中")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.indigo)
-                                .lineLimit(1)
-                        } else {
-                            Text("ノイズ遮断中")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
                         }
                     }
                     .frame(height: 14)
