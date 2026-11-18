@@ -185,16 +185,17 @@ struct HeaderMonitorBar: View {
             }
 
             // Live Audio Level + 40-Band Tonal Spectrum Visualizer
-            HStack(spacing: 16) {
+            HStack(spacing: 20) {
+                // Left: Microphone Level Meter & Noise Gate Calibration
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text("マイク音量: \(Int(engine.currentRMSdB)) dB")
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
                             .foregroundColor(engine.currentRMSdB >= engine.settings.minimumRMSdB ? .primary : .secondary)
 
-                        Text("(赤線ゲート: \(Int(engine.settings.minimumRMSdB)) dB)")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.red)
+                        Text("(ゲート: \(Int(engine.settings.minimumRMSdB)) dB)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(.red.opacity(0.85))
 
                         Spacer()
 
@@ -207,6 +208,7 @@ struct HeaderMonitorBar: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.orange)
                         .controlSize(.small)
+                        .fixedSize()
                         .help("現在の部屋の環境音＋6dBに赤線（最小音量ゲート）を自動設定し、普段の環境音を遮断します")
                     }
 
@@ -236,17 +238,17 @@ struct HeaderMonitorBar: View {
                     }
                     .frame(height: 10)
                 }
-                .frame(width: 390)
+                .frame(maxWidth: .infinity)
 
                 // 40-band Tonal Peak Visualizer
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text("チャイム周波数スペクトル (300Hz - 5.2kHz)")
+                        Text("周波数スペクトル (300Hz - 5.2kHz)")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.secondary)
                         Spacer()
                         if engine.currentRMSdB >= engine.settings.minimumRMSdB {
-                            Text("● 音声解析中")
+                            Text("● 解析中")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.indigo)
                         } else {
@@ -265,6 +267,7 @@ struct HeaderMonitorBar: View {
                     }
                     .frame(height: 22)
                 }
+                .frame(width: 250)
             }
         }
         .padding(.horizontal, 18)
