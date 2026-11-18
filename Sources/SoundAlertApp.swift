@@ -19,7 +19,7 @@ struct SoundAlertApp: App {
     @StateObject private var engine = AudioMonitorEngine()
 
     var body: some Scene {
-        WindowGroup("SoundAlert — Teamsサウンド認識 & Discord通知") {
+        WindowGroup("SoundAlert") {
             MainContentView(engine: engine)
         }
         .windowStyle(.titleBar)

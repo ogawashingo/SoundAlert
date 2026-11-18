@@ -71,7 +71,7 @@ enum DiscordNotifier {
             "fields": fields,
             "timestamp": isoNow,
             "footer": [
-                "text": "SoundAlert for macOS (iOS風カスタムサウンド認識)"
+                "text": "SoundAlert"
             ]
         ]
 

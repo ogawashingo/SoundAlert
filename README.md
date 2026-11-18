@@ -1,4 +1,4 @@
-# SoundAlert for macOS
+# SoundAlert
 
 iOSの「カスタムサウンド認識」のように、特定のアラート音（Microsoft Teamsの通知音・着信音など）をUSBカメラマイク等でリアルタイムに聴き取り、Discordチャンネル（Webhook）へスマホ通知を送るmacOSネイティブアプリです。
 
