@@ -356,9 +356,9 @@ struct SoundProfilesTabView: View {
                         .padding(.top, 2)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("iOS「カスタムサウンド認識」と同じ仕組みで、周囲で鳴る様々な通知音・アラート音を検知します")
+                        Text("iOS「カスタムサウンド認識」と同じ仕組みで、周囲で鳴る通知音・アラート音を検知します")
                             .font(.system(size: 13, weight: .bold))
-                        Text("・内蔵プリセットですぐにテスト可能（「登録音をテスト再生」を押すとMacから音が鳴り、マイクが拾って検知します）\n・検知したい実際の音を「新しいサウンドを録音して登録」または各カードの「＋実音を追加録音」で1〜3回学習させると、部屋の反響も含めて極めて高い精度で検知できます。")
+                        Text("検知したい音を「新しいサウンドを録音して登録」（または各カードの「＋実音を追加録音」）で1〜3回マイクに聴かせるだけで、高精度に音響パターンを学習・検知します。")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .lineSpacing(2)
@@ -375,48 +375,72 @@ struct SoundProfilesTabView: View {
                         )
                 )
 
-                // Sound Profile Cards
-                ForEach($engine.profiles) { $profile in
-                    SoundProfileCard(
-                        profile: $profile,
-                        liveSimilarity: engine.liveSimilarities[profile.id] ?? 0.0,
-                        peakSimilarity: engine.recentPeakSimilarities[profile.id] ?? 0.0,
-                        isPlaying: engine.isPlayingPreview && profile.sampleWavFilenames.contains(engine.playingFilename ?? ""),
-                        onChanged: {
-                            engine.saveProfiles()
-                        },
-                        onPlaySample: {
-                            if let wav = profile.sampleWavFilenames.last {
-                                engine.playWavFile(named: wav)
-                            }
-                        },
-                        onAddSample: {
-                            onAddSampleToProfile(profile)
-                        },
-                        onDelete: {
-                            engine.deleteProfile(profile)
+                if engine.profiles.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "waveform.badge.plus")
+                            .font(.system(size: 40))
+                            .foregroundColor(.secondary.opacity(0.6))
+                        Text("登録されたサウンドがありません")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.secondary)
+                        Text("右上の「新しいサウンドを録音して登録」ボタンから、\n検知したい通知音やチャイム音を録音してください。")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        Button {
+                            onOpenNewRecorder()
+                        } label: {
+                            Label("サウンドを録音して登録する", systemImage: "mic.badge.plus")
+                                .font(.system(size: 13, weight: .semibold))
                         }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.indigo)
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(NSColor.controlBackgroundColor))
                     )
-                }
-
-                HStack {
-                    Button {
-                        onOpenNewRecorder()
-                    } label: {
-                        Label("＋ 新しいカスタムサウンドを録音して追加", systemImage: "plus.circle.fill")
+                } else {
+                    // Sound Profile Cards
+                    ForEach($engine.profiles) { $profile in
+                        SoundProfileCard(
+                            profile: $profile,
+                            liveSimilarity: engine.liveSimilarities[profile.id] ?? 0.0,
+                            peakSimilarity: engine.recentPeakSimilarities[profile.id] ?? 0.0,
+                            isPlaying: engine.isPlayingPreview && profile.sampleWavFilenames.contains(engine.playingFilename ?? ""),
+                            onChanged: {
+                                engine.saveProfiles()
+                            },
+                            onPlaySample: {
+                                if let wav = profile.sampleWavFilenames.last {
+                                    engine.playWavFile(named: wav)
+                                }
+                            },
+                            onAddSample: {
+                                onAddSampleToProfile(profile)
+                            },
+                            onDelete: {
+                                engine.deleteProfile(profile)
+                            }
+                        )
                     }
-                    .buttonStyle(.bordered)
 
-                    Spacer()
+                    HStack {
+                        Button {
+                            onOpenNewRecorder()
+                        } label: {
+                            Label("＋ 新しいサウンドを録音して追加", systemImage: "plus.circle.fill")
+                        }
+                        .buttonStyle(.bordered)
 
-                    Button("内蔵プリセット音を初期状態に戻す") {
-                        engine.resetBuiltInPresets()
+                        Spacer()
                     }
-                    .font(.system(size: 12))
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
+                    .padding(.top, 4)
                 }
-                .padding(.top, 4)
             }
             .padding(18)
         }
@@ -449,19 +473,13 @@ struct SoundProfileCard: View {
                     HStack(spacing: 8) {
                         Text(profile.name)
                             .font(.system(size: 15, weight: .bold))
-                        Text(profile.isBuiltIn ? "プリセット" : "カスタム学習")
-                            .font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(profile.isBuiltIn ? Color.blue.opacity(0.15) : Color.green.opacity(0.18))
-                            )
-                            .foregroundColor(profile.isBuiltIn ? .blue : .green)
 
                         Text("学習サンプル数: \(profile.sampleCount)")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.indigo.opacity(0.12)))
+                            .foregroundColor(.indigo)
                     }
 
                     Text(String(format: "サンプル長: 約%.2f秒 / 検知しきい値: %d%%", profile.durationSeconds, Int(round(profile.threshold * 100))))

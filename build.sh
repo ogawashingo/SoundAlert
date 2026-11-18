@@ -19,7 +19,6 @@ echo "Compiling SoundAlert for Apple Silicon (arm64)..."
     -target arm64-apple-macosx14.0 \
     Sources/Models.swift \
     Sources/AudioFeatureExtractor.swift \
-    Sources/PresetSoundGenerator.swift \
     Sources/DiscordNotifier.swift \
     Sources/AudioMonitorEngine.swift \
     Sources/Views.swift \

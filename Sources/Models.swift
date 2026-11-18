@@ -18,7 +18,7 @@ struct SoundProfile: Identifiable, Codable {
     var durationSeconds: Double
     var threshold: Float
     var isEnabled: Bool
-    var isBuiltIn: Bool
+    var isBuiltIn: Bool = false
     /// Each element is a 2D spectrogram template: [frameIndex][bandIndex]
     /// Multiple templates allow recording 1~3 samples (like iOS Custom Sound Recognition)
     var templates: [[[Float]]]

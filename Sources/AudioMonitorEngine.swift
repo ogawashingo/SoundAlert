@@ -134,28 +134,22 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     private func loadProfiles() {
         if let data = try? Data(contentsOf: profilesFileURL),
-           let decoded = try? JSONDecoder().decode([SoundProfile].self, from: data),
-           !decoded.isEmpty {
-            // Refresh built-in preset templates with current extractor parameters while preserving user threshold/enabled state
-            let freshBuiltIns = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
-            var updated = decoded
-            for i in 0..<updated.count where updated[i].isBuiltIn {
-                if let match = freshBuiltIns.first(where: { $0.name == updated[i].name }) {
-                    updated[i].templates = match.templates
+           let decoded = try? JSONDecoder().decode([SoundProfile].self, from: data) {
+            // Remove any legacy preset profiles so only user-recorded profiles remain
+            let customOnly = decoded.filter { !$0.isBuiltIn }
+            self.profiles = customOnly
+            if customOnly.count != decoded.count {
+                saveProfiles()
+                // Clean up preset wav files
+                if let files = try? FileManager.default.contentsOfDirectory(atPath: storageDir.path) {
+                    for f in files where f.hasPrefix("preset_") {
+                        try? FileManager.default.removeItem(at: storageDir.appendingPathComponent(f))
+                    }
                 }
             }
-            self.profiles = updated
         } else {
-            self.profiles = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
-            saveProfiles()
+            self.profiles = []
         }
-    }
-
-    func resetBuiltInPresets() {
-        let defaults = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
-        let customOnly = profiles.filter { !$0.isBuiltIn }
-        profiles = defaults + customOnly
-        saveProfiles()
     }
 
     func saveHistory() {
@@ -871,9 +865,6 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     func playWavFile(named filename: String) {
         let url = storageDir.appendingPathComponent(filename)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            _ = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
-        }
         guard FileManager.default.fileExists(atPath: url.path) else {
             statusMessage = "再生ファイルが見つかりません: \(filename)"
             return
