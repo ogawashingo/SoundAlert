@@ -10,6 +10,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp Info.plist "$CONTENTS_DIR/Info.plist"
+[ -f AppIcon.icns ] && cp AppIcon.icns "$RESOURCES_DIR/AppIcon.icns"
 
 echo "Compiling SoundAlert for Apple Silicon (arm64)..."
 /usr/bin/swiftc \
