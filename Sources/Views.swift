@@ -141,7 +141,7 @@ struct HeaderMonitorBar: View {
 
                 // Microphone Device Picker
                 HStack(spacing: 6) {
-                    Image(systemName: "web.camera.fill")
+                    Image(systemName: "mic.fill")
                         .foregroundColor(.accentColor)
                     Picker("入力マイク:", selection: Binding(
                         get: { engine.selectedDeviceID },

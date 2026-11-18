@@ -109,7 +109,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         if let data = try? Data(contentsOf: settingsFileURL),
            var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
             var needSave = false
-            // Migrate old default (-48 dB) to a calmer noise gate (-38 dB) for high-gain USB webcams
+            // Migrate old default (-48 dB) to a calmer noise gate (-38 dB) for ambient microphones
             if decoded.minimumRMSdB == -48.0 {
                 decoded.minimumRMSdB = -38.0
                 needSave = true
@@ -272,17 +272,9 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         DispatchQueue.main.async {
             self.inputDevices = found
 
-            // Prefer saved UID, then C922 / USB webcam, then system default input
+            // Prefer previously saved device UID, otherwise fallback to system default input device
             if let saved = found.first(where: { $0.uid == self.settings.selectedDeviceUID }) {
                 self.selectedDeviceID = saved.id
-            } else if let c922 = found.first(where: {
-                $0.name.localizedCaseInsensitiveContains("C922") ||
-                $0.name.localizedCaseInsensitiveContains("Webcam") ||
-                $0.name.localizedCaseInsensitiveContains("Camera")
-            }) {
-                self.selectedDeviceID = c922.id
-                self.settings.selectedDeviceUID = c922.uid
-                self.saveSettings()
             } else if let def = found.first(where: { $0.isDefault }) ?? found.first {
                 self.selectedDeviceID = def.id
                 self.settings.selectedDeviceUID = def.uid
