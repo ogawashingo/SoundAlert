@@ -457,6 +457,18 @@ struct SoundProfileCard: View {
     var onAddSample: () -> Void
     var onDelete: () -> Void
 
+    @State private var isEditingName: Bool = false
+    @State private var editingNameText: String = ""
+
+    private func commitNameEdit() {
+        let trimmed = editingNameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            profile.name = trimmed
+            onChanged()
+        }
+        isEditingName = false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
@@ -471,8 +483,53 @@ struct SoundProfileCard: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
-                        Text(profile.name)
-                            .font(.system(size: 15, weight: .bold))
+                        if isEditingName {
+                            HStack(spacing: 4) {
+                                TextField("サウンド名", text: $editingNameText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 14, weight: .bold))
+                                    .frame(maxWidth: 220)
+                                    .onSubmit {
+                                        commitNameEdit()
+                                    }
+
+                                Button {
+                                    commitNameEdit()
+                                } label: {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                        .font(.system(size: 16))
+                                }
+                                .buttonStyle(.plain)
+                                .help("名前を保存")
+
+                                Button {
+                                    isEditingName = false
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 16))
+                                }
+                                .buttonStyle(.plain)
+                                .help("キャンセル")
+                            }
+                        } else {
+                            HStack(spacing: 6) {
+                                Text(profile.name)
+                                    .font(.system(size: 15, weight: .bold))
+
+                                Button {
+                                    editingNameText = profile.name
+                                    isEditingName = true
+                                } label: {
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("サウンド名を変更")
+                            }
+                        }
 
                         Text("学習サンプル数: \(profile.sampleCount)")
                             .font(.system(size: 11, weight: .medium))
