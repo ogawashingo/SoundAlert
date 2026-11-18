@@ -57,7 +57,7 @@ struct MainContentView: View {
                     engine.beginCustomSoundSession()
                     showingCustomRecorder = true
                 } label: {
-                    Label("実際のTeams音を録音して登録", systemImage: "mic.badge.plus")
+                    Label("新しいサウンドを録音して登録", systemImage: "mic.badge.plus")
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .buttonStyle(.borderedProminent)
@@ -356,9 +356,9 @@ struct SoundProfilesTabView: View {
                         .padding(.top, 2)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("iOS「カスタムサウンド認識」と同じ仕組みで、別PCから鳴るTeamsアラート音を検知します")
+                        Text("iOS「カスタムサウンド認識」と同じ仕組みで、周囲で鳴る様々な通知音・アラート音を検知します")
                             .font(.system(size: 13, weight: .bold))
-                        Text("・内蔵プリセットですぐにテスト可能（「登録音をテスト再生」を押すとMacから音が鳴り、USBカメラマイクが拾って検知します）\n・別PCのスピーカーから鳴る実際のTeams通知音を「実際のTeams音を録音して登録」または各カードの「＋実音を追加録音」で1〜3回学習させると、部屋の反響も含めて極めて高い精度で検知できます。")
+                        Text("・内蔵プリセットですぐにテスト可能（「登録音をテスト再生」を押すとMacから音が鳴り、マイクが拾って検知します）\n・検知したい実際の音を「新しいサウンドを録音して登録」または各カードの「＋実音を追加録音」で1〜3回学習させると、部屋の反響も含めて極めて高い精度で検知できます。")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .lineSpacing(2)
@@ -409,7 +409,7 @@ struct SoundProfilesTabView: View {
 
                     Spacer()
 
-                    Button("内蔵Teamsプリセットを初期状態に戻す") {
+                    Button("内蔵プリセット音を初期状態に戻す") {
                         engine.resetBuiltInPresets()
                     }
                     .font(.system(size: 12))
@@ -594,7 +594,7 @@ struct CustomSoundRecorderSheet: View {
     let targetProfile: SoundProfile?
     @Binding var isPresented: Bool
 
-    @State private var customName: String = "Teams アラート音（実音録音）"
+    @State private var customName: String = "カスタムサウンド"
     @State private var selectedIcon: String = "bell.and.waves.left.and.right.fill"
     @State private var customThreshold: Float = 0.70
 
@@ -615,7 +615,7 @@ struct CustomSoundRecorderSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(targetProfile == nil ? "カスタムサウンドの録音・登録（iOS方式）" : "「\(targetProfile!.name)」に実音サンプルを追加")
                         .font(.system(size: 17, weight: .bold))
-                    Text("別PCから鳴るTeamsの通知音をUSBカメラマイク（\(engine.currentDeviceName)）で聴き取って記憶します")
+                    Text("検知したい通知音やチャイム音をマイク（\(engine.currentDeviceName)）で聴き取って記憶します")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
@@ -628,7 +628,7 @@ struct CustomSoundRecorderSheet: View {
                 HStack(spacing: 12) {
                     Text("サウンド名:")
                         .font(.system(size: 13, weight: .medium))
-                    TextField("例: Teams チャット通知音", text: $customName)
+                    TextField("例: チャット通知音、インターホン、タイマー", text: $customName)
                         .textFieldStyle(.roundedBorder)
 
                     Picker("アイコン", selection: $selectedIcon) {
@@ -663,7 +663,7 @@ struct CustomSoundRecorderSheet: View {
                 switch engine.recordingState {
                 case .idle:
                     VStack(spacing: 10) {
-                        Text("ボタンを押してから、別PCでTeamsの通知音（または着信音）を鳴らしてください")
+                        Text("ボタンを押してから、検知したい音（通知音や呼び出し音など）を鳴らしてください")
                             .font(.system(size: 13, weight: .medium))
                         HStack(spacing: 14) {
                             Button {
@@ -692,7 +692,7 @@ struct CustomSoundRecorderSheet: View {
                     VStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.regular)
-                        Text("耳を澄ませています... 別PCでTeamsの音を鳴らしてください")
+                        Text("耳を澄ませています... 検知したい音を鳴らしてください")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(.indigo)
                         Text("現在のマイク音量: \(Int(engine.currentRMSdB)) dB（音が鳴ると自動で約1.6秒間キャプチャします）")
@@ -886,7 +886,7 @@ struct DiscordSettingsTabView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("通知メッセージ本文:")
                                 .font(.system(size: 12, weight: .semibold))
-                            TextField("Microsoft Teamsのアラート音を検知しました！", text: $engine.settings.customMessageText)
+                            TextField("登録されたサウンドを検知しました！", text: $engine.settings.customMessageText)
                                 .textFieldStyle(.roundedBorder)
                                 .onChange(of: engine.settings.customMessageText) {
                                     engine.saveSettings()
@@ -993,7 +993,7 @@ struct DiscordSettingsTabView: View {
                 mention: settings.discordMention,
                 customMessage: settings.customMessageText,
                 hostName: settings.hostName,
-                profileName: "テスト通知 (Teams チャット通知音)",
+                profileName: "テスト通知 (チャイム通知音)",
                 similarity: 0.95,
                 deviceName: devName,
                 includeSimilarity: settings.includeSimilarityInDiscord,

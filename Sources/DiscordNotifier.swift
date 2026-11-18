@@ -37,7 +37,7 @@ enum DiscordNotifier {
         let trimmedMention = mention.trimmingCharacters(in: .whitespacesAndNewlines)
         let titleText = isTest
             ? "🔔 SoundAlert テスト通知"
-            : "🚨 \(customMessage.isEmpty ? "Teamsのアラート音を検知しました！" : customMessage)"
+            : "🚨 \(customMessage.isEmpty ? "登録されたサウンドを検知しました！" : customMessage)"
 
         let contentText: String
         if trimmedMention.isEmpty {
@@ -73,7 +73,7 @@ enum DiscordNotifier {
         }
 
         let embed: [String: Any] = [
-            "title": isTest ? "Discord通知テスト成功" : "Microsoft Teams サウンド検知アラート",
+            "title": isTest ? "Discord通知テスト成功" : "サウンド検知アラート",
             "description": isTest
                 ? "\(effectiveHost) (\(deviceName)) からのDiscord通知連携が正常に動作しています。"
                 : "\(effectiveHost) のマイクが登録済みのアラート音を検知しました。",

@@ -25,6 +25,6 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>USBカメラマイク（C922 Pro Stream Webcam等）からMicrosoft Teamsのアラート音をリアルタイムに検知するためにマイクを使用します。</string>
+    <string>マイクから特定のアラート音・通知音をリアルタイムに検知するためにマイクを使用します。</string>
 </dict>
 </plist>

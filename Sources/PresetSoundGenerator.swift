@@ -1,10 +1,10 @@
 import Foundation
 
-enum TeamsPresetGenerator {
+enum PresetSoundGenerator {
     static let sampleRate: Double = 16000.0
 
-    /// Synthesizes a realistic two-tone Teams notification chime (16kHz mono)
-    static func generateTeamsNotificationSamples() -> [Float] {
+    /// Synthesizes a two-tone alert chime (16kHz mono)
+    static func generateChimeSamples() -> [Float] {
         let duration = 0.70
         let totalSamples = Int(sampleRate * duration)
         var buffer = [Float](repeating: 0, count: totalSamples)
@@ -33,13 +33,13 @@ enum TeamsPresetGenerator {
         return buffer
     }
 
-    /// Synthesizes the Teams Incoming Call arpeggio chime phrase (16kHz mono)
-    static func generateTeamsCallRingtoneSamples() -> [Float] {
+    /// Synthesizes an incoming call / ringtone arpeggio phrase (16kHz mono)
+    static func generateRingtoneSamples() -> [Float] {
         let duration = 1.65
         let totalSamples = Int(sampleRate * duration)
         var buffer = [Float](repeating: 0, count: totalSamples)
 
-        // Characteristic upbeat marimba/bell arpeggio motif
+        // Upbeat marimba/bell arpeggio motif
         let events: [(start: Double, freq: Double, amp: Double, decay: Double)] = [
             (0.04, 587.33, 0.55, 9.0),   // D5
             (0.22, 659.25, 0.55, 9.0),   // E5
@@ -69,9 +69,9 @@ enum TeamsPresetGenerator {
         let extractor = AudioFeatureExtractor.shared
         var result = [SoundProfile]()
 
-        let notifSamples = generateTeamsNotificationSamples()
+        let notifSamples = generateChimeSamples()
         if let extracted = extractor.extractNormalizedTemplate(from: notifSamples) {
-            let wavName = "preset_teams_notification.wav"
+            let wavName = "preset_chime_notification.wav"
             let wavURL = storageDir.appendingPathComponent(wavName)
             try? AudioFeatureExtractor.writeWavFile(
                 samples: extracted.trimmedSamples,
@@ -82,7 +82,7 @@ enum TeamsPresetGenerator {
             result.append(
                 SoundProfile(
                     id: UUID(),
-                    name: "Teams チャット通知音（プリセット）",
+                    name: "チャイム通知音（プリセット）",
                     icon: "bubble.left.and.exclamationmark.bubble.right.fill",
                     createdAt: Date(),
                     durationSeconds: Double(extracted.trimmedSamples.count) / sampleRate,
@@ -95,9 +95,9 @@ enum TeamsPresetGenerator {
             )
         }
 
-        let callSamples = generateTeamsCallRingtoneSamples()
+        let callSamples = generateRingtoneSamples()
         if let extracted = extractor.extractNormalizedTemplate(from: callSamples) {
-            let wavName = "preset_teams_call.wav"
+            let wavName = "preset_ringtone_call.wav"
             let wavURL = storageDir.appendingPathComponent(wavName)
             try? AudioFeatureExtractor.writeWavFile(
                 samples: extracted.trimmedSamples,
@@ -108,7 +108,7 @@ enum TeamsPresetGenerator {
             result.append(
                 SoundProfile(
                     id: UUID(),
-                    name: "Teams 通話・会議着信音（プリセット）",
+                    name: "着信・呼び出し音（プリセット）",
                     icon: "phone.badge.waveform.fill",
                     createdAt: Date(),
                     durationSeconds: Double(extracted.trimmedSamples.count) / sampleRate,

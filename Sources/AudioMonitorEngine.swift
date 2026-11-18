@@ -137,7 +137,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
            let decoded = try? JSONDecoder().decode([SoundProfile].self, from: data),
            !decoded.isEmpty {
             // Refresh built-in preset templates with current extractor parameters while preserving user threshold/enabled state
-            let freshBuiltIns = TeamsPresetGenerator.createDefaultProfiles(storageDir: storageDir)
+            let freshBuiltIns = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
             var updated = decoded
             for i in 0..<updated.count where updated[i].isBuiltIn {
                 if let match = freshBuiltIns.first(where: { $0.name == updated[i].name }) {
@@ -146,13 +146,13 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             }
             self.profiles = updated
         } else {
-            self.profiles = TeamsPresetGenerator.createDefaultProfiles(storageDir: storageDir)
+            self.profiles = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
             saveProfiles()
         }
     }
 
     func resetBuiltInPresets() {
-        let defaults = TeamsPresetGenerator.createDefaultProfiles(storageDir: storageDir)
+        let defaults = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
         let customOnly = profiles.filter { !$0.isBuiltIn }
         profiles = defaults + customOnly
         saveProfiles()
@@ -827,7 +827,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     func saveNewCustomProfile(name: String, icon: String, threshold: Float) {
         guard !pendingTemplates.isEmpty else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = trimmedName.isEmpty ? "Teams アラート音（カスタム録音）" : trimmedName
+        let finalName = trimmedName.isEmpty ? "カスタムサウンド" : trimmedName
         let avgFrames = pendingTemplates.map { $0.count }.reduce(0, +) / max(1, pendingTemplates.count)
         let estDuration = Double(avgFrames * AudioFeatureExtractor.hopSize) / AudioFeatureExtractor.sampleRate
 
@@ -849,7 +849,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         beginCustomSoundSession()
     }
 
-    /// Appends a newly recorded template to an existing profile (e.g., adding a real mic sample to a Teams profile)
+    /// Appends a newly recorded template to an existing profile (e.g., adding a real mic sample to an existing profile)
     func addRecordedSamplesToProfile(_ profileID: UUID) {
         guard !pendingTemplates.isEmpty,
               let idx = profiles.firstIndex(where: { $0.id == profileID }) else { return }
@@ -872,7 +872,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     func playWavFile(named filename: String) {
         let url = storageDir.appendingPathComponent(filename)
         if !FileManager.default.fileExists(atPath: url.path) {
-            _ = TeamsPresetGenerator.createDefaultProfiles(storageDir: storageDir)
+            _ = PresetSoundGenerator.createDefaultProfiles(storageDir: storageDir)
         }
         guard FileManager.default.fileExists(atPath: url.path) else {
             statusMessage = "再生ファイルが見つかりません: \(filename)"

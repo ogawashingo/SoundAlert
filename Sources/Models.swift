@@ -44,7 +44,7 @@ struct DetectionEvent: Identifiable, Codable {
 struct AppSettings: Codable {
     var discordWebhookURL: String = ""
     var discordMention: String = "@here"
-    var customMessageText: String = "Microsoft Teamsのアラート音を検知しました！"
+    var customMessageText: String = "登録されたサウンドを検知しました！"
     var hostName: String = Host.current().localizedName ?? "Mac"
     var cooldownSeconds: Double = 10.0
     var selectedDeviceUID: String = ""
