@@ -1,0 +1,17 @@
+# Built application bundle
+SoundAlert.app/
+
+# Swift / Xcode build artifacts
+.build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+
+# Local audio / config files if placed in repo
+*.wav
+settings.json
+profiles.json
+history.json
+
+# macOS
+.DS_Store
