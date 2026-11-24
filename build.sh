@@ -15,11 +15,14 @@ cp Info.plist "$CONTENTS_DIR/Info.plist"
 SDK_PATH="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
 [ -d "$SDK_PATH" ] || SDK_PATH="$(xcrun --show-sdk-path)"
 
+MODULE_CACHE_DIR="$(pwd)/.build/module-cache"
+mkdir -p "$MODULE_CACHE_DIR"
+
 echo "Compiling SoundAlert for Apple Silicon (arm64)..."
 /usr/bin/swiftc \
     -O \
     -sdk "$SDK_PATH" \
-    -module-cache-path /tmp/swift-module-cache \
+    -module-cache-path "$MODULE_CACHE_DIR" \
     -swift-version 5 \
     -target arm64-apple-macosx14.0 \
     Sources/Models.swift \

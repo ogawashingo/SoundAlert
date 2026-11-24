@@ -73,6 +73,10 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     private var lastUIWasQuiet: Bool = false
     private static let zeroFrame = [Float](repeating: 0, count: AudioFeatureExtractor.numBands)
 
+    /// Thread-safe snapshots accessed exclusively on `processingQueue`
+    private var processingProfiles: [SoundProfile] = []
+    private var processingSettings: AppSettings = AppSettings()
+
     // MARK: - Persistence Paths
     let storageDir: URL
     private let profilesFileURL: URL
@@ -134,7 +138,22 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         try? FileManager.default.removeItem(at: url)
     }
 
+    private func syncProcessingSettings() {
+        let snapshot = settings
+        processingQueue.async { [weak self] in
+            self?.processingSettings = snapshot
+        }
+    }
+
+    private func syncProcessingProfiles() {
+        let snapshot = profiles
+        processingQueue.async { [weak self] in
+            self?.processingProfiles = snapshot
+        }
+    }
+
     func saveSettings() {
+        syncProcessingSettings()
         KeychainHelper.saveWebhookURL(settings.discordWebhookURL)
         var sanitized = settings
         sanitized.discordWebhookURL = ""
@@ -178,6 +197,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
 
         self.settings = decoded
+        syncProcessingSettings()
         if needSave {
             saveSettings()
         }
@@ -191,6 +211,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     func saveProfiles() {
+        syncProcessingProfiles()
         if let data = try? JSONEncoder().encode(profiles) {
             writeProtectedFile(data, to: profilesFileURL)
         }
@@ -202,6 +223,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             // Remove any legacy preset profiles so only user-recorded profiles remain
             let customOnly = decoded.filter { !$0.isBuiltIn }
             self.profiles = customOnly
+            syncProcessingProfiles()
             if customOnly.count != decoded.count {
                 saveProfiles()
                 // Clean up preset wav files
@@ -213,6 +235,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             }
         } else {
             self.profiles = []
+            syncProcessingProfiles()
         }
     }
 
@@ -391,7 +414,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         var cfStr: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &cfStr)
-        guard status == noErr, let value = cfStr?.takeUnretainedValue() else { return nil }
+        guard status == noErr, let value = cfStr?.takeRetainedValue() else { return nil }
         return value as String
     }
 
@@ -485,8 +508,11 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             vDSP_vasm(channelData[0], 1, channelData[1], 1, &half, &monoInput, 1, vDSP_Length(frameCount))
         } else {
             var scale = 1.0 / Float(channels)
-            for c in 0..<channels {
-                vDSP_vsma(channelData[c], 1, &scale, monoInput, 1, &monoInput, 1, vDSP_Length(frameCount))
+            monoInput.withUnsafeMutableBufferPointer { dst in
+                guard let base = dst.baseAddress else { return }
+                for c in 0..<channels {
+                    vDSP_vsma(channelData[c], 1, &scale, base, 1, base, 1, vDSP_Length(frameCount))
+                }
             }
         }
 
@@ -529,10 +555,13 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             pcmRingBuffer.removeFirst(pcmRingBuffer.count - maxRingBufferSamples)
         }
 
+        let currentSettings = processingSettings
+        let currentProfiles = processingProfiles
+
         // 3. Handle iOS-style custom sound auto-trigger / manual recording
         if isWaitingForTrigger {
-            // Trigger when RMS rises above -42 dB (or 8 dB above minimumRMSdB)
-            let triggerDB = max(-42.0, settings.minimumRMSdB + 6.0)
+            // Trigger when RMS rises above -42 dB (or 6 dB above minimumRMSdB)
+            let triggerDB = max(-42.0, currentSettings.minimumRMSdB + 6.0)
             if db >= triggerDB {
                 isWaitingForTrigger = false
                 isCapturingSample = true
@@ -543,8 +572,8 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         } else if isCapturingSample {
             captureBuffer.append(contentsOf: samples)
             let progress = min(1.0, Double(captureBuffer.count) / Double(targetCaptureSamples))
-            DispatchQueue.main.async {
-                self.recordingState = .capturing(progress: progress)
+            DispatchQueue.main.async { [weak self] in
+                self?.recordingState = .capturing(progress: progress)
             }
             if captureBuffer.count >= targetCaptureSamples {
                 isCapturingSample = false
@@ -559,20 +588,30 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         let fftSize = AudioFeatureExtractor.fftSize
         let hopSize = AudioFeatureExtractor.hopSize
         let extractor = AudioFeatureExtractor.shared
-        if db >= settings.minimumRMSdB {
+        if db >= currentSettings.minimumRMSdB {
             // Keep analysis active for ~1.4 seconds (90 frames) after sound crosses noise gate
             // so the full chime duration + decay tail aligns completely with the template.
             activeHoldFramesRemaining = 90
         }
         let isAboveNoiseGate = activeHoldFramesRemaining > 0
-        let shouldComputeFFT = isAboveNoiseGate || db >= (settings.minimumRMSdB - 6.0) || isCapturingSample
+        let shouldComputeFFT = isAboveNoiseGate || db >= (currentSettings.minimumRMSdB - 6.0) || isCapturingSample
 
         guard stftSampleAccumulator.count >= fftSize else { return }
 
         var latestFrame: [Float] = Self.zeroFrame
-        var newFramesCount = 0
         var simMap: [UUID: Float] = [:]
-        let currentProfiles = self.profiles
+        var triggeredCandidate: (profile: SoundProfile, maxSim: Float, clipSamples: [Float])? = nil
+
+        let triggerIfReady: (SoundProfile, Float) -> Void = { profile, maxSim in
+            let now = Date()
+            if now.timeIntervalSince(self.lastTriggerTime) >= currentSettings.cooldownSeconds {
+                self.lastTriggerTime = now
+                // Capture last 2.0 seconds of audio for replay in History
+                let clipLen = min(self.pcmRingBuffer.count, Int(AudioFeatureExtractor.sampleRate * 2.0))
+                let clip = Array(self.pcmRingBuffer.suffix(clipLen))
+                triggeredCandidate = (profile, maxSim, clip)
+            }
+        }
 
         if shouldComputeFFT {
             var offset = 0
@@ -582,9 +621,9 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
                     let frame = extractor.computeFrame(samples512: slice)
                     spectrogramRing.append(frame)
                     latestFrame = frame
-                    newFramesCount += 1
                     offset += hopSize
 
+                    var candidateCreatedThisHop = false
                     if activeHoldFramesRemaining > 0 {
                         activeHoldFramesRemaining -= 1
                         // Evaluate template alignment on every hop so large audio buffers never skip peak alignment
@@ -611,8 +650,20 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
                                     }
                                 } else {
                                     pendingPeakCandidate = (profile, hopBest, 6)
+                                    candidateCreatedThisHop = true
                                 }
                             }
+                        }
+                    }
+
+                    // Advance peak candidate countdown one hop at a time
+                    if !candidateCreatedThisHop, var cand = pendingPeakCandidate {
+                        cand.framesLeft -= 1
+                        if cand.framesLeft <= 0 {
+                            triggerIfReady(cand.profile, cand.maxSim)
+                            pendingPeakCandidate = nil
+                        } else {
+                            pendingPeakCandidate = cand
                         }
                     }
                 }
@@ -625,31 +676,20 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             }
         } else {
             let hops = (stftSampleAccumulator.count - fftSize) / hopSize + 1
-            newFramesCount = hops
             stftSampleAccumulator.removeFirst(hops * hopSize)
             if !lastUIWasQuiet || pendingPeakCandidate != nil {
                 for _ in 0..<min(hops, 4) {
                     spectrogramRing.append(Self.zeroFrame)
                 }
             }
-        }
-
-        // Advance peak candidate countdown if active
-        var triggeredCandidate: (profile: SoundProfile, maxSim: Float, clipSamples: [Float])? = nil
-        if var cand = pendingPeakCandidate {
-            cand.framesLeft -= newFramesCount
-            if cand.framesLeft <= 0 {
-                let now = Date()
-                if now.timeIntervalSince(lastTriggerTime) >= settings.cooldownSeconds {
-                    lastTriggerTime = now
-                    // Capture last 2.0 seconds of audio for replay in History
-                    let clipLen = min(pcmRingBuffer.count, Int(AudioFeatureExtractor.sampleRate * 2.0))
-                    let clip = Array(pcmRingBuffer.suffix(clipLen))
-                    triggeredCandidate = (cand.profile, cand.maxSim, clip)
+            if var cand = pendingPeakCandidate {
+                cand.framesLeft -= hops
+                if cand.framesLeft <= 0 {
+                    triggerIfReady(cand.profile, cand.maxSim)
+                    pendingPeakCandidate = nil
+                } else {
+                    pendingPeakCandidate = cand
                 }
-                pendingPeakCandidate = nil
-            } else {
-                pendingPeakCandidate = cand
             }
         }
 
@@ -679,6 +719,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
         let wasQuiet = lastUIWasQuiet
         lastUIWasQuiet = !isAboveNoiseGate
+        let isRecordingActive = isWaitingForTrigger || isCapturingSample
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -686,7 +727,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             let hasVisibleMainWindow = NSApp.windows.contains {
                 $0.isVisible && $0.occlusionState.contains(.visible) && $0.frame.width > 300
             }
-            guard hasVisibleMainWindow || self.isWaitingForTrigger || self.isCapturingSample else {
+            guard hasVisibleMainWindow || isRecordingActive else {
                 return
             }
 
