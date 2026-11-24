@@ -33,7 +33,12 @@ echo "Compiling SoundAlert for Apple Silicon (arm64)..."
     Sources/AudioFeatureExtractor.swift \
     Sources/DiscordNotifier.swift \
     Sources/AudioMonitorEngine.swift \
-    Sources/Views.swift \
+    Sources/Views/MainContentView.swift \
+    Sources/Views/HeaderMonitorBar.swift \
+    Sources/Views/SoundProfilesTabView.swift \
+    Sources/Views/CustomSoundRecorderSheet.swift \
+    Sources/Views/DiscordSettingsTabView.swift \
+    Sources/Views/DetectionHistoryTabView.swift \
     Sources/SoundAlertApp.swift \
     -framework SwiftUI \
     -framework AppKit \
