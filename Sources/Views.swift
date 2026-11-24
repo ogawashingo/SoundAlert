@@ -855,7 +855,7 @@ struct CustomSoundRecorderSheet: View {
             // Footer buttons
             HStack {
                 Button("キャンセル") {
-                    engine.cancelCurrentCapture()
+                    engine.discardCustomSoundSession()
                     isPresented = false
                 }
                 .keyboardShortcut(.cancelAction)
@@ -888,6 +888,12 @@ struct CustomSoundRecorderSheet: View {
         }
         .padding(22)
         .frame(width: 580)
+        .onDisappear {
+            // Ensure any unsaved recorded WAV files are cleaned up if the sheet is dismissed
+            if engine.recordedSamplesCount > 0 || engine.recordingState != .idle {
+                engine.discardCustomSoundSession()
+            }
+        }
     }
 }
 
@@ -1090,7 +1096,7 @@ struct DiscordSettingsTabView: View {
 struct SecureWebhookField: View {
     @Binding var text: String
     var onCommit: () -> Void
-    @State private var showPlain: Bool = true
+    @State private var showPlain: Bool = false
 
     var body: some View {
         HStack {
@@ -1134,8 +1140,7 @@ struct DetectionHistoryTabView: View {
                 Spacer()
                 if !engine.detectionHistory.isEmpty {
                     Button("履歴をクリア") {
-                        engine.detectionHistory.removeAll()
-                        engine.saveHistory()
+                        engine.clearDetectionHistory()
                     }
                     .font(.system(size: 12))
                     .buttonStyle(.bordered)

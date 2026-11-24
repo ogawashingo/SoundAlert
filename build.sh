@@ -23,6 +23,7 @@ echo "Compiling SoundAlert for Apple Silicon (arm64)..."
     -swift-version 5 \
     -target arm64-apple-macosx14.0 \
     Sources/Models.swift \
+    Sources/KeychainHelper.swift \
     Sources/AudioFeatureExtractor.swift \
     Sources/DiscordNotifier.swift \
     Sources/AudioMonitorEngine.swift \
@@ -34,6 +35,7 @@ echo "Compiling SoundAlert for Apple Silicon (arm64)..."
     -framework CoreAudio \
     -framework AudioToolbox \
     -framework Accelerate \
+    -framework Security \
     -o "$MACOS_DIR/SoundAlert"
 
 /usr/bin/codesign --force --deep --sign - "$APP_BUNDLE"

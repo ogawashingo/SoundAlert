@@ -82,7 +82,12 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     override init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         self.storageDir = appSupport.appendingPathComponent("SoundAlert", isDirectory: true)
-        try? FileManager.default.createDirectory(at: storageDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: storageDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: storageDir.path)
 
         self.profilesFileURL = storageDir.appendingPathComponent("profiles.json")
         self.settingsFileURL = storageDir.appendingPathComponent("settings.json")
@@ -99,16 +104,52 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     // MARK: - Persistence
 
+    private func writeProtectedFile(_ data: Data, to url: URL) {
+        do {
+            try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            // Ignore write errors silently to avoid disrupting audio monitoring
+        }
+    }
+
+    /// Validates that a filename resolves strictly inside `storageDir` (prevents path traversal)
+    private func safeStorageFileURL(for filename: String) -> URL? {
+        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed != ".",
+              trimmed != "..",
+              (trimmed as NSString).lastPathComponent == trimmed else {
+            return nil
+        }
+        let candidate = storageDir.appendingPathComponent(trimmed).standardizedFileURL
+        let basePath = storageDir.standardizedFileURL.path
+        let prefix = basePath.hasSuffix("/") ? basePath : basePath + "/"
+        guard candidate.path.hasPrefix(prefix) else { return nil }
+        return candidate
+    }
+
+    private func removeStorageFile(named filename: String) {
+        guard let url = safeStorageFileURL(for: filename) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
     func saveSettings() {
-        if let data = try? JSONEncoder().encode(settings) {
-            try? data.write(to: settingsFileURL, options: .atomic)
+        KeychainHelper.saveWebhookURL(settings.discordWebhookURL)
+        var sanitized = settings
+        sanitized.discordWebhookURL = ""
+        if let data = try? JSONEncoder().encode(sanitized) {
+            writeProtectedFile(data, to: settingsFileURL)
         }
     }
 
     private func loadSettings() {
+        var decoded = AppSettings()
+        var needSave = false
+
         if let data = try? Data(contentsOf: settingsFileURL),
-           var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            var needSave = false
+           let loaded = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            decoded = loaded
             // Migrate old default (-48 dB) to a calmer noise gate (-38 dB) for ambient microphones
             if decoded.minimumRMSdB == -48.0 {
                 decoded.minimumRMSdB = -38.0
@@ -123,10 +164,22 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
                 decoded.customMessageText = "登録されたサウンドを検知しました！"
                 needSave = true
             }
-            self.settings = decoded
-            if needSave {
-                saveSettings()
+        }
+
+        // Load Webhook URL from Keychain; migrate from plaintext settings.json if present
+        if let keychainURL = KeychainHelper.loadWebhookURL(), !keychainURL.isEmpty {
+            if !decoded.discordWebhookURL.isEmpty {
+                needSave = true // Strip legacy plaintext copy from settings.json
             }
+            decoded.discordWebhookURL = keychainURL
+        } else if !decoded.discordWebhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            KeychainHelper.saveWebhookURL(decoded.discordWebhookURL)
+            needSave = true // Rewrite settings.json without plaintext webhook URL
+        }
+
+        self.settings = decoded
+        if needSave {
+            saveSettings()
         }
     }
 
@@ -139,7 +192,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     func saveProfiles() {
         if let data = try? JSONEncoder().encode(profiles) {
-            try? data.write(to: profilesFileURL, options: .atomic)
+            writeProtectedFile(data, to: profilesFileURL)
         }
     }
 
@@ -154,7 +207,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
                 // Clean up preset wav files
                 if let files = try? FileManager.default.contentsOfDirectory(atPath: storageDir.path) {
                     for f in files where f.hasPrefix("preset_") {
-                        try? FileManager.default.removeItem(at: storageDir.appendingPathComponent(f))
+                        removeStorageFile(named: f)
                     }
                 }
             }
@@ -165,8 +218,18 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     func saveHistory() {
         if let data = try? JSONEncoder().encode(Array(detectionHistory.prefix(100))) {
-            try? data.write(to: historyFileURL, options: .atomic)
+            writeProtectedFile(data, to: historyFileURL)
         }
+    }
+
+    func clearDetectionHistory() {
+        for event in detectionHistory {
+            if let wav = event.capturedWavFilename {
+                removeStorageFile(named: wav)
+            }
+        }
+        detectionHistory.removeAll()
+        saveHistory()
     }
 
     private func loadHistory() {
@@ -684,6 +747,12 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
         detectionHistory.insert(initialEvent, at: 0)
         if detectionHistory.count > 100 {
+            let evicted = detectionHistory[100...]
+            for event in evicted {
+                if let wav = event.capturedWavFilename {
+                    removeStorageFile(named: wav)
+                }
+            }
             detectionHistory.removeLast(detectionHistory.count - 100)
         }
         saveHistory()
@@ -745,6 +814,14 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         lastCapturedSamples.removeAll()
         recordedSamplesCount = 0
         recordingState = .idle
+    }
+
+    /// Cancels the current recording session and deletes any unsaved pending WAV files
+    func discardCustomSoundSession() {
+        for wav in pendingWavFilenames {
+            removeStorageFile(named: wav)
+        }
+        beginCustomSoundSession()
     }
 
     /// Waits for the user to play the sound on their other PC, then automatically captures it
@@ -815,7 +892,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         guard !pendingTemplates.isEmpty else { return }
         pendingTemplates.removeLast()
         if let wav = pendingWavFilenames.popLast() {
-            try? FileManager.default.removeItem(at: storageDir.appendingPathComponent(wav))
+            removeStorageFile(named: wav)
         }
         recordedSamplesCount = pendingTemplates.count
         recordingState = .idle
@@ -858,7 +935,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     func deleteProfile(_ profile: SoundProfile) {
         for wav in profile.sampleWavFilenames where !wav.hasPrefix("preset_") {
-            try? FileManager.default.removeItem(at: storageDir.appendingPathComponent(wav))
+            removeStorageFile(named: wav)
         }
         profiles.removeAll { $0.id == profile.id }
         saveProfiles()
@@ -867,8 +944,8 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     // MARK: - Audio Playback (Preview Registered Sound or Detected Clip)
 
     func playWavFile(named filename: String) {
-        let url = storageDir.appendingPathComponent(filename)
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        guard let url = safeStorageFileURL(for: filename),
+              FileManager.default.fileExists(atPath: url.path) else {
             statusMessage = "再生ファイルが見つかりません: \(filename)"
             return
         }
