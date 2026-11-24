@@ -12,16 +12,25 @@ iOSの「カスタムサウンド認識」のように、特定のアラート�
 
 ## ビルドと起動方法
 
-Xcode Command Line Tools が入った macOS（Apple Silicon）で以下のコマンドを実行します：
+Xcode Command Line Tools が入った macOS 14.0 以降（Apple Silicon）で以下のコマンドを実行します：
 
 ```zsh
 zsh build.sh
 open SoundAlert.app
 ```
 
+## テストの実行
+
+Webhook URL 検証・パストラバーサル対策・音響特徴抽出／類似度計算のユニットテストを実行できます：
+
+```zsh
+zsh test.sh
+```
+
 ## データ保存先（Git管理外）
 
-設定（Discord Webhook URL等）や録音した音声データは、リポジトリ内ではなく以下のローカルディレクトリに保存されます：
+- **Discord Webhook URL**: macOS の **Keychain**（`com.soundalert.macos`）に暗号化保存されます（`settings.json` には平文保存されません）
+- **その他の設定・録音した音声データ**: リポジトリ内ではなく以下のローカルディレクトリ（パーミッション `0700` / `0600`）に保存されます：
 
 ```text
 ~/Library/Application Support/SoundAlert/

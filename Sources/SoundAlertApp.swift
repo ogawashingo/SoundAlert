@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var onWillTerminate: (() -> Void)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -16,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep running in the menu bar even if the main window is closed
         return false
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        onWillTerminate?()
+    }
 }
 
 @main
@@ -27,6 +33,12 @@ struct SoundAlertApp: App {
     var body: some Scene {
         WindowGroup("SoundAlert", id: "main") {
             MainContentView(engine: engine)
+                .onAppear {
+                    let targetEngine = engine
+                    appDelegate.onWillTerminate = { [weak targetEngine] in
+                        targetEngine?.flushPendingSaves()
+                    }
+                }
         }
         .windowStyle(.titleBar)
 
@@ -62,6 +74,7 @@ struct SoundAlertApp: App {
                 }
 
                 Button("SoundAlertを終了") {
+                    engine.flushPendingSaves()
                     NSApp.terminate(nil)
                 }
             }

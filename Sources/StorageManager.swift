@@ -10,9 +10,16 @@ final class StorageManager {
     private var settingsSaveWorkItem: DispatchWorkItem?
     private var profilesSaveWorkItem: DispatchWorkItem?
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.storageDir = appSupport.appendingPathComponent("SoundAlert", isDirectory: true)
+    private var pendingSettingsWrite: (() -> Void)?
+    private var pendingProfilesWrite: (() -> Void)?
+
+    init(storageDir customDir: URL? = nil) {
+        if let customDir = customDir {
+            self.storageDir = customDir
+        } else {
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            self.storageDir = appSupport.appendingPathComponent("SoundAlert", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(
             at: storageDir,
             withIntermediateDirectories: true,
@@ -114,11 +121,34 @@ final class StorageManager {
 
         settingsSaveWorkItem?.cancel()
         if immediate {
+            pendingSettingsWrite = nil
             ioQueue.async(execute: performWrite)
         } else {
-            let item = DispatchWorkItem(block: performWrite)
+            pendingSettingsWrite = performWrite
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingSettingsWrite = nil
+                performWrite()
+            }
             settingsSaveWorkItem = item
             ioQueue.asyncAfter(deadline: .now() + 0.35, execute: item)
+        }
+    }
+
+    /// Synchronously flushes any pending debounced saves (call on app termination)
+    func flushPendingSaves() {
+        settingsSaveWorkItem?.cancel()
+        settingsSaveWorkItem = nil
+        profilesSaveWorkItem?.cancel()
+        profilesSaveWorkItem = nil
+
+        let settingsWrite = pendingSettingsWrite
+        let profilesWrite = pendingProfilesWrite
+        pendingSettingsWrite = nil
+        pendingProfilesWrite = nil
+
+        ioQueue.sync {
+            settingsWrite?()
+            profilesWrite?()
         }
     }
 
@@ -154,9 +184,14 @@ final class StorageManager {
 
         profilesSaveWorkItem?.cancel()
         if immediate {
+            pendingProfilesWrite = nil
             ioQueue.async(execute: performWrite)
         } else {
-            let item = DispatchWorkItem(block: performWrite)
+            pendingProfilesWrite = performWrite
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingProfilesWrite = nil
+                performWrite()
+            }
             profilesSaveWorkItem = item
             ioQueue.asyncAfter(deadline: .now() + 0.35, execute: item)
         }

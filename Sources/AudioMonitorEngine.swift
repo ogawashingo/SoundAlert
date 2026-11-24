@@ -145,6 +145,10 @@ final class AudioMonitorEngine: NSObject, ObservableObject {
         storage.saveHistory(detectionHistory)
     }
 
+    func flushPendingSaves() {
+        storage.flushPendingSaves()
+    }
+
     func clearDetectionHistory() {
         for event in detectionHistory {
             if let wav = event.capturedWavFilename {
