@@ -15,7 +15,7 @@ final class AudioFeatureExtractor {
     /// Triangular filter weights: [numBands][fftSize / 2]
     private let filterBank: [[Float]]
 
-    // Reusable scratch buffers (accessed serially on processingQueue) to eliminate heap allocations
+    // Reusable scratch buffers (instance-owned; accessed serially on the owner's processingQueue)
     private var scratchWindowed = [Float](repeating: 0, count: AudioFeatureExtractor.fftSize)
     private let scratchZeros = [Float](repeating: 0, count: AudioFeatureExtractor.fftSize)
     private var scratchRealOut = [Float](repeating: 0, count: AudioFeatureExtractor.fftSize)
@@ -23,8 +23,6 @@ final class AudioFeatureExtractor {
     private var scratchPowerSpec = [Float](repeating: 0, count: AudioFeatureExtractor.fftSize / 2)
     private var scratchBandLog = [Float](repeating: 0, count: AudioFeatureExtractor.numBands)
     private var scratchSorted = [Float](repeating: 0, count: AudioFeatureExtractor.numBands)
-
-    static let shared = AudioFeatureExtractor()
 
     init() {
         var win = [Float](repeating: 0, count: Self.fftSize)
@@ -256,32 +254,62 @@ final class AudioFeatureExtractor {
         let T = normalizedTemplate.count
         guard liveFrames.count == T, T > 0 else { return 0.0 }
         let B = normalizedTemplate[0].count
+        guard B > 1 else { return 0.0 }
 
-        let normalizedLive = normalizeTemplate(Array(liveFrames))
-
-        // Compute dot product with exact band alignment and +/- 1 band tolerance
-        var bestDot: Float = 0.0
-        for shift in [-1, 0, 1] {
-            var dot: Float = 0.0
-            for t in 0..<T {
-                let tplRow = normalizedTemplate[t]
-                let liveRow = normalizedLive[t]
-                if shift == 0 {
-                    for b in 0..<B {
-                        dot += tplRow[b] * liveRow[b]
-                    }
-                } else if shift == -1 {
-                    for b in 1..<B {
-                        dot += tplRow[b] * liveRow[b - 1]
-                    }
-                } else {
-                    for b in 0..<(B - 1) {
-                        dot += tplRow[b] * liveRow[b + 1]
+        // Normalize liveFrames into a single contiguous flat buffer to avoid T per-row allocations
+        let totalCount = T * B
+        var flatLive = [Float](repeating: 0, count: totalCount)
+        flatLive.withUnsafeMutableBufferPointer { dst in
+            guard let dstBase = dst.baseAddress else { return }
+            var offset = 0
+            for frame in liveFrames {
+                if frame.count == B {
+                    frame.withUnsafeBufferPointer { src in
+                        if let srcBase = src.baseAddress {
+                            _ = memcpy(dstBase + offset, srcBase, B * MemoryLayout<Float>.size)
+                        }
                     }
                 }
+                offset += B
             }
-            let weight: Float = (shift == 0) ? 1.0 : 0.94
-            bestDot = max(bestDot, dot * weight)
+        }
+
+        var mean: Float = 0
+        vDSP_meanv(flatLive, 1, &mean, vDSP_Length(totalCount))
+        var negMean = -mean
+        var normSq: Float = 0
+        flatLive.withUnsafeMutableBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            vDSP_vsadd(base, 1, &negMean, base, 1, vDSP_Length(totalCount))
+            vDSP_svesq(base, 1, &normSq, vDSP_Length(totalCount))
+            var invNorm = 1.0 / sqrtf(max(normSq, 25.0))
+            vDSP_vsmul(base, 1, &invNorm, base, 1, vDSP_Length(totalCount))
+        }
+
+        // Compute dot product with exact band alignment and +/- 1 band tolerance using vDSP_dotpr
+        var bestDot: Float = 0.0
+        flatLive.withUnsafeBufferPointer { liveBuf in
+            guard let liveBase = liveBuf.baseAddress else { return }
+            for shift in [-1, 0, 1] {
+                var dot: Float = 0.0
+                for t in 0..<T {
+                    let liveRowPtr = liveBase + t * B
+                    normalizedTemplate[t].withUnsafeBufferPointer { tplBuf in
+                        guard let tplBase = tplBuf.baseAddress else { return }
+                        var rowDot: Float = 0
+                        if shift == 0 {
+                            vDSP_dotpr(tplBase, 1, liveRowPtr, 1, &rowDot, vDSP_Length(B))
+                        } else if shift == -1 {
+                            vDSP_dotpr(tplBase + 1, 1, liveRowPtr, 1, &rowDot, vDSP_Length(B - 1))
+                        } else {
+                            vDSP_dotpr(tplBase, 1, liveRowPtr + 1, 1, &rowDot, vDSP_Length(B - 1))
+                        }
+                        dot += rowDot
+                    }
+                }
+                let weight: Float = (shift == 0) ? 1.0 : 0.94
+                bestDot = max(bestDot, dot * weight)
+            }
         }
 
         return min(1.0, max(0.0, bestDot))

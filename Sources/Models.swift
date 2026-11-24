@@ -49,7 +49,6 @@ struct AppSettings: Codable {
     var cooldownSeconds: Double = 10.0
     var selectedDeviceUID: String = ""
     var minimumRMSdB: Float = -38.0
-    var sendMacOSNotification: Bool = true
     var flashWindowOnDetect: Bool = true
     var includeSimilarityInDiscord: Bool = true
 }

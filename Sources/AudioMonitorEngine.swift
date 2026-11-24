@@ -5,7 +5,7 @@ import AudioToolbox
 import Accelerate
 import AppKit
 
-final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegate {
+final class AudioMonitorEngine: NSObject, ObservableObject {
     // MARK: - Published UI State
     @Published var inputDevices: [AudioDevice] = []
     @Published var selectedDeviceID: AudioDeviceID = 0
@@ -43,11 +43,15 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     @Published var recordedSamplesCount: Int = 0
     private var pendingTemplates: [[[Float]]] = []
     private var pendingWavFilenames: [String] = []
-    private var lastCapturedSamples: [Float] = []
+
+    // MARK: - Collaborators
+    private let storage = StorageManager()
+    private let previewPlayer = AudioPreviewPlayer()
+    /// Owned exclusively by `processingQueue` so scratch buffers are never accessed concurrently
+    private let featureExtractor = AudioFeatureExtractor()
 
     // MARK: - Internal Audio Processing State
     private var audioEngine: AVAudioEngine?
-    private var audioPlayer: AVAudioPlayer?
     private let processingQueue = DispatchQueue(label: "com.soundalert.audioprocessing", qos: .userInteractive)
 
     /// 16kHz mono ring buffer (stores last 4 seconds = 64,000 samples)
@@ -59,13 +63,13 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     private var spectrogramRing: [[Float]] = []
     private let maxSpectrogramFrames = 250
 
-    /// Auto-trigger recording buffers
+    /// Auto-trigger recording buffers (accessed exclusively on `processingQueue`)
     private var isWaitingForTrigger: Bool = false
     private var isCapturingSample: Bool = false
     private var captureBuffer: [Float] = []
     private let targetCaptureSamples: Int = Int(AudioFeatureExtractor.sampleRate * 1.6)
 
-    /// Cooldown tracking
+    /// Cooldown tracking (accessed exclusively on `processingQueue`)
     private var lastTriggerTime: Date = .distantPast
     private var pendingPeakCandidate: (profile: SoundProfile, maxSim: Float, framesLeft: Int)? = nil
     private var activeHoldFramesRemaining: Int = 0
@@ -77,66 +81,34 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     private var processingProfiles: [SoundProfile] = []
     private var processingSettings: AppSettings = AppSettings()
 
-    // MARK: - Persistence Paths
-    let storageDir: URL
-    private let profilesFileURL: URL
-    private let settingsFileURL: URL
-    private let historyFileURL: URL
-
     override init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.storageDir = appSupport.appendingPathComponent("SoundAlert", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: storageDir,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: storageDir.path)
-
-        self.profilesFileURL = storageDir.appendingPathComponent("profiles.json")
-        self.settingsFileURL = storageDir.appendingPathComponent("settings.json")
-        self.historyFileURL = storageDir.appendingPathComponent("history.json")
-
         super.init()
 
-        loadSettings()
-        loadProfiles()
-        loadHistory()
+        previewPlayer.onStateChanged = { [weak self] isPlaying, filename in
+            guard let self = self else { return }
+            self.isPlayingPreview = isPlaying
+            self.playingFilename = filename
+            if isPlaying {
+                self.statusMessage = "🔊 テスト音をMacのスピーカーから再生中..."
+            } else {
+                self.statusMessage = self.isMonitoring ? "監視中 (\(self.currentDeviceName))" : "停止中"
+            }
+        }
+        previewPlayer.onError = { [weak self] message in
+            self?.statusMessage = message
+        }
+
+        self.settings = storage.loadSettings()
+        self.profiles = storage.loadProfiles()
+        self.detectionHistory = storage.loadHistory()
+        syncProcessingSettings()
+        syncProcessingProfiles()
+
         refreshInputDevices()
         checkAndRequestMicrophonePermission()
     }
 
-    // MARK: - Persistence
-
-    private func writeProtectedFile(_ data: Data, to url: URL) {
-        do {
-            try data.write(to: url, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        } catch {
-            // Ignore write errors silently to avoid disrupting audio monitoring
-        }
-    }
-
-    /// Validates that a filename resolves strictly inside `storageDir` (prevents path traversal)
-    private func safeStorageFileURL(for filename: String) -> URL? {
-        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              trimmed != ".",
-              trimmed != "..",
-              (trimmed as NSString).lastPathComponent == trimmed else {
-            return nil
-        }
-        let candidate = storageDir.appendingPathComponent(trimmed).standardizedFileURL
-        let basePath = storageDir.standardizedFileURL.path
-        let prefix = basePath.hasSuffix("/") ? basePath : basePath + "/"
-        guard candidate.path.hasPrefix(prefix) else { return nil }
-        return candidate
-    }
-
-    private func removeStorageFile(named filename: String) {
-        guard let url = safeStorageFileURL(for: filename) else { return }
-        try? FileManager.default.removeItem(at: url)
-    }
+    // MARK: - Persistence & Thread-Safe Snapshots
 
     private func syncProcessingSettings() {
         let snapshot = settings
@@ -152,114 +124,35 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
     }
 
-    func saveSettings() {
+    func saveSettings(immediate: Bool = false) {
         syncProcessingSettings()
-        KeychainHelper.saveWebhookURL(settings.discordWebhookURL)
-        var sanitized = settings
-        sanitized.discordWebhookURL = ""
-        if let data = try? JSONEncoder().encode(sanitized) {
-            writeProtectedFile(data, to: settingsFileURL)
-        }
-    }
-
-    private func loadSettings() {
-        var decoded = AppSettings()
-        var needSave = false
-
-        if let data = try? Data(contentsOf: settingsFileURL),
-           let loaded = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            decoded = loaded
-            // Migrate old default (-48 dB) to a calmer noise gate (-38 dB) for ambient microphones
-            if decoded.minimumRMSdB == -48.0 {
-                decoded.minimumRMSdB = -38.0
-                needSave = true
-            }
-            if decoded.hostName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                decoded.hostName = Host.current().localizedName ?? "Mac"
-                needSave = true
-            }
-            // Migrate legacy Teams text to generalized text
-            if decoded.customMessageText.contains("Teams") {
-                decoded.customMessageText = "登録されたサウンドを検知しました！"
-                needSave = true
-            }
-        }
-
-        // Load Webhook URL from Keychain; migrate from plaintext settings.json if present
-        if let keychainURL = KeychainHelper.loadWebhookURL(), !keychainURL.isEmpty {
-            if !decoded.discordWebhookURL.isEmpty {
-                needSave = true // Strip legacy plaintext copy from settings.json
-            }
-            decoded.discordWebhookURL = keychainURL
-        } else if !decoded.discordWebhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            KeychainHelper.saveWebhookURL(decoded.discordWebhookURL)
-            needSave = true // Rewrite settings.json without plaintext webhook URL
-        }
-
-        self.settings = decoded
-        syncProcessingSettings()
-        if needSave {
-            saveSettings()
-        }
+        storage.saveSettings(settings, immediate: immediate)
     }
 
     func calibrateNoiseGate() {
         // Set gate 6 dB above current room ambient level
         let targetGate = min(-20.0, max(-55.0, roundf(currentRMSdB + 6.0)))
         settings.minimumRMSdB = targetGate
-        saveSettings()
+        saveSettings(immediate: true)
     }
 
-    func saveProfiles() {
+    func saveProfiles(immediate: Bool = false) {
         syncProcessingProfiles()
-        if let data = try? JSONEncoder().encode(profiles) {
-            writeProtectedFile(data, to: profilesFileURL)
-        }
-    }
-
-    private func loadProfiles() {
-        if let data = try? Data(contentsOf: profilesFileURL),
-           let decoded = try? JSONDecoder().decode([SoundProfile].self, from: data) {
-            // Remove any legacy preset profiles so only user-recorded profiles remain
-            let customOnly = decoded.filter { !$0.isBuiltIn }
-            self.profiles = customOnly
-            syncProcessingProfiles()
-            if customOnly.count != decoded.count {
-                saveProfiles()
-                // Clean up preset wav files
-                if let files = try? FileManager.default.contentsOfDirectory(atPath: storageDir.path) {
-                    for f in files where f.hasPrefix("preset_") {
-                        removeStorageFile(named: f)
-                    }
-                }
-            }
-        } else {
-            self.profiles = []
-            syncProcessingProfiles()
-        }
+        storage.saveProfiles(profiles, immediate: immediate)
     }
 
     func saveHistory() {
-        if let data = try? JSONEncoder().encode(Array(detectionHistory.prefix(100))) {
-            writeProtectedFile(data, to: historyFileURL)
-        }
+        storage.saveHistory(detectionHistory)
     }
 
     func clearDetectionHistory() {
         for event in detectionHistory {
             if let wav = event.capturedWavFilename {
-                removeStorageFile(named: wav)
+                storage.removeFile(named: wav)
             }
         }
         detectionHistory.removeAll()
         saveHistory()
-    }
-
-    private func loadHistory() {
-        if let data = try? Data(contentsOf: historyFileURL),
-           let decoded = try? JSONDecoder().decode([DetectionEvent].self, from: data) {
-            self.detectionHistory = decoded
-        }
     }
 
     // MARK: - Microphone Permission & CoreAudio Device Enumeration
@@ -293,68 +186,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     func refreshInputDevices() {
-        var propAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        var dataSize: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propAddress,
-            0,
-            nil,
-            &dataSize
-        ) == noErr else { return }
-
-        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-        var deviceIDs = [AudioDeviceID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propAddress,
-            0,
-            nil,
-            &dataSize,
-            &deviceIDs
-        ) == noErr else { return }
-
-        var defaultInputID: AudioDeviceID = 0
-        var defaultSize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var defaultAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &defaultAddr,
-            0,
-            nil,
-            &defaultSize,
-            &defaultInputID
-        )
-
-        var found: [AudioDevice] = []
-        for id in deviceIDs {
-            let inputChannels = Self.getInputChannelCount(deviceID: id)
-            guard inputChannels > 0 else { continue }
-
-            let name = Self.getDeviceStringProperty(deviceID: id, selector: kAudioObjectPropertyName) ?? "Unknown Mic (\(id))"
-            let uid = Self.getDeviceStringProperty(deviceID: id, selector: kAudioDevicePropertyDeviceUID) ?? "\(id)"
-            let sr = Self.getDeviceSampleRate(deviceID: id)
-            found.append(
-                AudioDevice(
-                    id: id,
-                    uid: uid,
-                    name: name,
-                    sampleRate: sr,
-                    inputChannels: inputChannels,
-                    isDefault: id == defaultInputID
-                )
-            )
-        }
-
+        let found = CoreAudioDeviceManager.enumerateInputDevices()
         DispatchQueue.main.async {
             self.inputDevices = found
 
@@ -371,7 +203,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     func selectDevice(_ device: AudioDevice) {
         selectedDeviceID = device.id
         settings.selectedDeviceUID = device.uid
-        saveSettings()
+        saveSettings(immediate: true)
         if isMonitoring {
             stopMonitoring()
             startMonitoring()
@@ -380,54 +212,6 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     var currentDeviceName: String {
         inputDevices.first(where: { $0.id == selectedDeviceID })?.name ?? "USBマイク"
-    }
-
-    private static func getInputChannelCount(deviceID: AudioDeviceID) -> Int {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeInput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr, size > 0 else {
-            return 0
-        }
-        let rawPtr = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
-        defer { rawPtr.deallocate() }
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, rawPtr) == noErr else {
-            return 0
-        }
-        let bufferList = UnsafeMutableAudioBufferListPointer(rawPtr.assumingMemoryBound(to: AudioBufferList.self))
-        var channels = 0
-        for buf in bufferList {
-            channels += Int(buf.mNumberChannels)
-        }
-        return channels
-    }
-
-    private static func getDeviceStringProperty(deviceID: AudioDeviceID, selector: AudioObjectPropertySelector) -> String? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: selector,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var cfStr: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &cfStr)
-        guard status == noErr, let value = cfStr?.takeRetainedValue() else { return nil }
-        return value as String
-    }
-
-    private static func getDeviceSampleRate(deviceID: AudioDeviceID) -> Double {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyNominalSampleRate,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var rate: Float64 = 16000.0
-        var size = UInt32(MemoryLayout<Float64>.size)
-        AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &rate)
-        return rate
     }
 
     // MARK: - Start / Stop Real-Time Audio Monitoring
@@ -587,7 +371,6 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         stftSampleAccumulator.append(contentsOf: samples)
         let fftSize = AudioFeatureExtractor.fftSize
         let hopSize = AudioFeatureExtractor.hopSize
-        let extractor = AudioFeatureExtractor.shared
         if db >= currentSettings.minimumRMSdB {
             // Keep analysis active for ~1.4 seconds (90 frames) after sound crosses noise gate
             // so the full chime duration + decay tail aligns completely with the template.
@@ -618,7 +401,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             stftSampleAccumulator.withUnsafeBufferPointer { buf in
                 while offset + fftSize <= buf.count {
                     let slice = UnsafeBufferPointer(start: buf.baseAddress! + offset, count: fftSize)
-                    let frame = extractor.computeFrame(samples512: slice)
+                    let frame = featureExtractor.computeFrame(samples512: slice)
                     spectrogramRing.append(frame)
                     latestFrame = frame
                     offset += hopSize
@@ -772,8 +555,9 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     private func handleDetection(profile: SoundProfile, similarity: Float, clipSamples: [Float]) {
         let eventID = UUID()
         let wavName = "detected_\(eventID.uuidString).wav"
-        let wavURL = storageDir.appendingPathComponent(wavName)
-        try? AudioFeatureExtractor.writeWavFile(samples: clipSamples, to: wavURL)
+        if let wavURL = storage.safeFileURL(for: wavName) {
+            try? AudioFeatureExtractor.writeWavFile(samples: clipSamples, to: wavURL)
+        }
 
         let initialEvent = DetectionEvent(
             id: eventID,
@@ -791,7 +575,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
             let evicted = detectionHistory[100...]
             for event in evicted {
                 if let wav = event.capturedWavFilename {
-                    removeStorageFile(named: wav)
+                    storage.removeFile(named: wav)
                 }
             }
             detectionHistory.removeLast(detectionHistory.count - 100)
@@ -852,7 +636,6 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
         pendingTemplates.removeAll()
         pendingWavFilenames.removeAll()
-        lastCapturedSamples.removeAll()
         recordedSamplesCount = 0
         recordingState = .idle
     }
@@ -860,7 +643,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     /// Cancels the current recording session and deletes any unsaved pending WAV files
     func discardCustomSoundSession() {
         for wav in pendingWavFilenames {
-            removeStorageFile(named: wav)
+            storage.removeFile(named: wav)
         }
         beginCustomSoundSession()
     }
@@ -903,7 +686,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     private func finalizeCapturedSample(_ rawSamples: [Float]) {
-        guard let extracted = AudioFeatureExtractor.shared.extractNormalizedTemplate(from: rawSamples) else {
+        guard let extracted = featureExtractor.extractNormalizedTemplate(from: rawSamples) else {
             DispatchQueue.main.async {
                 self.recordingState = .error("音が小さすぎるか短すぎるため特徴を抽出できませんでした。もう一度お試しください。")
             }
@@ -911,17 +694,17 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
 
         let wavName = "custom_\(UUID().uuidString).wav"
-        let wavURL = storageDir.appendingPathComponent(wavName)
-        try? AudioFeatureExtractor.writeWavFile(
-            samples: extracted.trimmedSamples,
-            normalizePeak: true,
-            addSpeakerWakeupAndRepeatIfShort: true,
-            to: wavURL
-        )
+        if let wavURL = storage.safeFileURL(for: wavName) {
+            try? AudioFeatureExtractor.writeWavFile(
+                samples: extracted.trimmedSamples,
+                normalizePeak: true,
+                addSpeakerWakeupAndRepeatIfShort: true,
+                to: wavURL
+            )
+        }
         let dur = Double(extracted.trimmedSamples.count) / AudioFeatureExtractor.sampleRate
 
         DispatchQueue.main.async {
-            self.lastCapturedSamples = extracted.trimmedSamples
             self.pendingTemplates.append(extracted.template)
             self.pendingWavFilenames.append(wavName)
             self.recordedSamplesCount = self.pendingTemplates.count
@@ -933,7 +716,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         guard !pendingTemplates.isEmpty else { return }
         pendingTemplates.removeLast()
         if let wav = pendingWavFilenames.popLast() {
-            removeStorageFile(named: wav)
+            storage.removeFile(named: wav)
         }
         recordedSamplesCount = pendingTemplates.count
         recordingState = .idle
@@ -960,7 +743,7 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
         )
 
         profiles.insert(profile, at: 0)
-        saveProfiles()
+        saveProfiles(immediate: true)
         beginCustomSoundSession()
     }
 
@@ -970,60 +753,31 @@ final class AudioMonitorEngine: NSObject, ObservableObject, AVAudioPlayerDelegat
               let idx = profiles.firstIndex(where: { $0.id == profileID }) else { return }
         profiles[idx].templates.append(contentsOf: pendingTemplates)
         profiles[idx].sampleWavFilenames.append(contentsOf: pendingWavFilenames)
-        saveProfiles()
+        saveProfiles(immediate: true)
         beginCustomSoundSession()
     }
 
     func deleteProfile(_ profile: SoundProfile) {
         for wav in profile.sampleWavFilenames where !wav.hasPrefix("preset_") {
-            removeStorageFile(named: wav)
+            storage.removeFile(named: wav)
         }
         profiles.removeAll { $0.id == profile.id }
-        saveProfiles()
+        saveProfiles(immediate: true)
     }
 
     // MARK: - Audio Playback (Preview Registered Sound or Detected Clip)
 
     func playWavFile(named filename: String) {
-        guard let url = safeStorageFileURL(for: filename),
+        guard let url = storage.safeFileURL(for: filename),
               FileManager.default.fileExists(atPath: url.path) else {
             statusMessage = "再生ファイルが見つかりません: \(filename)"
             return
         }
-
-        if isPlayingPreview && playingFilename == filename {
-            audioPlayer?.stop()
-            isPlayingPreview = false
-            playingFilename = nil
-            statusMessage = isMonitoring ? "監視中 (\(currentDeviceName))" : "停止中"
-            return
-        }
-
-        do {
-            let player = try AVAudioPlayer(contentsOf: url)
-            player.delegate = self
-            player.volume = 1.0
-            player.prepareToPlay()
-            player.play()
-            self.audioPlayer = player
-            self.isPlayingPreview = true
-            self.playingFilename = filename
-            self.statusMessage = "🔊 テスト音をMacのスピーカーから再生中..."
-        } catch {
-            self.statusMessage = "再生エラー: \(error.localizedDescription)"
-        }
+        previewPlayer.togglePlay(url: url, filename: filename)
     }
 
     func playLastCapturedPreview() {
         guard let lastWav = pendingWavFilenames.last else { return }
         playWavFile(named: lastWav)
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        DispatchQueue.main.async {
-            self.isPlayingPreview = false
-            self.playingFilename = nil
-            self.statusMessage = self.isMonitoring ? "監視中 (\(self.currentDeviceName))" : "停止中"
-        }
     }
 }

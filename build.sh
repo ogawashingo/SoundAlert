@@ -27,6 +27,9 @@ echo "Compiling SoundAlert for Apple Silicon (arm64)..."
     -target arm64-apple-macosx14.0 \
     Sources/Models.swift \
     Sources/KeychainHelper.swift \
+    Sources/CoreAudioDeviceManager.swift \
+    Sources/StorageManager.swift \
+    Sources/AudioPreviewPlayer.swift \
     Sources/AudioFeatureExtractor.swift \
     Sources/DiscordNotifier.swift \
     Sources/AudioMonitorEngine.swift \

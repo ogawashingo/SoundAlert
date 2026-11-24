@@ -22,9 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct SoundAlertApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var engine = AudioMonitorEngine()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup("SoundAlert") {
+        WindowGroup("SoundAlert", id: "main") {
             MainContentView(engine: engine)
         }
         .windowStyle(.titleBar)
@@ -56,10 +57,8 @@ struct SoundAlertApp: App {
                 Divider()
 
                 Button("メイン画面を表示") {
+                    openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)
-                    for window in NSApp.windows {
-                        window.makeKeyAndOrderFront(nil)
-                    }
                 }
 
                 Button("SoundAlertを終了") {
